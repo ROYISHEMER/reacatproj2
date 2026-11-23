@@ -26,6 +26,7 @@ Optional settings are listed in `.env.example`. No API keys are required.
 | Bing News RSS (`www.bing.com`), Nasdaq news RSS (`www.nasdaq.com`) | additional headlines per ticker |
 | Stocktwits (`api.stocktwits.com`) | trader posts and bullish/bearish tags |
 | Hacker News (`hn.algolia.com`), Mastodon (`mastodon.social`), Lemmy (`lemmy.world`) | forum posts and comments about the company from the last week |
+| US Treasury (`home.treasury.gov`), Polymarket (`gamma-api.polymarket.com`) | yields and prediction-market odds, shown as market context |
 | ApeWisdom (`apewisdom.io`) | how often each ticker is mentioned in retail-investor forums (dashboard tab + stock page) |
 | Reddit (`www.reddit.com` public JSON, no account; official API if keys are set) | posts mentioning the ticker in investing subreddits |
 
@@ -33,13 +34,14 @@ Each source fails independently: the stock page still renders and lists what was
 
 ## How the forecast works (`server/analysis/`)
 
-Twelve factors are scored from -1 to +1 and weighted by how well each has held up in published
+Up to fourteen factors are scored from -1 to +1 and weighted by how well each has held up in published
 research:
 
 | Evidence | Factors |
 | --- | --- |
 | Strong | price momentum and trend (technical score), analyst earnings-estimate revisions, latest earnings surprise (post-earnings drift) |
-| Moderate | analyst consensus and price targets, news sentiment, overall market trend (S&P 500), strength relative to the market |
+| Moderate | analyst consensus and price targets, news sentiment, overall market trend (S&P 500), strength relative to the market, sector trend |
+| Tested per stock | historical twins (only when it beats the base rate in the back-test) |
 | Weak | forum and social sentiment, insider trades, institutional holdings, short interest, options put/call ratio |
 
 1. The technical score is replayed over the stock's own history (walk-forward, only data available
@@ -54,8 +56,41 @@ research:
    (`/api/track-record`, shown on the "sources and accuracy" page). Set `DATA_DIR` to a persistent
    path in production; the log is lost when an ephemeral container is recycled.
 
+## Claude AI layer (`server/ai/`)
+
+Off by default. Set `ANTHROPIC_API_KEY` and the stock page starts using Claude, through the official
+`@anthropic-ai/sdk`:
+
+- One request per stock reads up to 60 collected headlines and returns, as schema-validated JSON:
+  per-headline sentiment, relevance, event type, event date and product, plus a short analyst view in
+  Hebrew (thesis, bull case, bear case, what to watch, certainty).
+- Claude's per-headline reading replaces the word-list sentiment in the news factor, and its events
+  replace keyword matching. Quantitative inputs (prices, estimates, filings) stay in code.
+- The model only sees the headlines and is never asked for a price forecast, to keep knowledge it may
+  hold about later outcomes out of the result.
+- Results are cached for 6 hours per stock (memory + `DATA_DIR/ai-cache.json`), calls are capped by
+  `AI_DAILY_CALL_LIMIT`, and token usage is reported at `/api/ai/status`.
+- Any failure (bad key, rate limit, refusal, malformed output) falls back to the keyword analysis and
+  is shown on the page. Refusals are retried server-side on Anthropic's default fallback model.
+
+`AI_MODEL` defaults to `claude-fable-5-2`; `AI_EFFORT` defaults to `high`.
+
+## Original analyses (`server/analysis/insights.js`)
+
+- **Historical twins** - finds the past days of the same stock most similar to today (momentum, RSI,
+  distance from average, volatility regime) and reports what followed. It is back-tested walk-forward and
+  joins the forecast only when it beats the best constant guess on that stock.
+- **Hype gap** - talk (news, social, forum mentions) versus hard data (estimate revisions, earnings
+  surprises, insiders, institutions). Flags enthusiasm that has run ahead of the numbers, and the reverse.
+- **Earnings memory** - how the stock actually moved after each of its recent reports.
+- **Learned weights** - each logged forecast stores every factor's score; once enough forecasts have
+  matured, factor weights are scaled (0.5x to 1.5x) by their measured hit rate.
+
+Market context (`server/sources/macro.js`): US Treasury yields, Polymarket odds for rates and
+recession, the US economic calendar, and the stock's sector ETF (the only one that feeds the forecast).
+
 ## Layout
 
-- `server/` – Express API (`/api/movers`, `/api/stock/:symbol`, `/api/search`, `/api/track-record`), sources and analysis
+- `server/` – Express API (`/api/movers`, `/api/stock/:symbol`, `/api/search`, `/api/track-record`, `/api/ai/status`), sources, analysis and the Claude layer
 - `src/` – React (Vite) client
 - `test/` – unit tests for indicators, sentiment, event parsing and the forecast model

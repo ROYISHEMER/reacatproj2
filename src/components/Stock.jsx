@@ -1,4 +1,5 @@
 import PriceChart from './PriceChart.jsx';
+import { AiCard, EarningsMemoryCard, HypeCard, MacroCard, TwinsCard } from './Insights.jsx';
 import { CONFIDENCE, DIRECTION, fmt, sign, useApi } from '../lib.js';
 
 const SIGNALS = {
@@ -14,8 +15,10 @@ const SIGNALS = {
   institutions: ['גופים מוסדיים', 'האם קרנות הגדילו או הקטינו החזקות'],
   short: ['פוזיציות שורט', 'שינוי בהיקף המכירות בחסר'],
   options: ['שוק האופציות', 'יחס אופציות מכר (Put) לרכש (Call)'],
+  sector: ['מגמת הסקטור', 'המגמה של קרן הסל של הסקטור שהמניה שייכת אליו'],
+  twins: ['תאומים היסטוריים', 'מה קרה אחרי הימים בעבר שהכי דומים למצב של היום'],
 };
-const EVIDENCE = { strong: 'ביסוס מחקרי חזק', moderate: 'ביסוס מחקרי בינוני', weak: 'ביסוס מחקרי חלש' };
+const EVIDENCE = { strong: 'ביסוס מחקרי חזק', moderate: 'ביסוס מחקרי בינוני', weak: 'ביסוס מחקרי חלש', tested: 'נבדק על המניה עצמה' };
 
 // Plain-language summary of what drives the forecast.
 function summarize(f) {
@@ -25,7 +28,7 @@ function summarize(f) {
   const neg = ranked.filter((s) => s.impact < 0).sort((a, b) => a.impact - b.impact);
   return { pos: names(pos), neg: names(neg) };
 }
-const EVENT_TYPES = { product: 'מוצר / השקה', earnings: 'דוחות ותחזיות', regulatory: 'רגולציה ומשפט', deal: 'עסקאות ושותפויות', capital: 'הון ודיבידנד' };
+const EVENT_TYPES = { product: 'מוצר / השקה', earnings: 'דוחות ותחזיות', regulatory: 'רגולציה ומשפט', deal: 'עסקאות ושותפויות', capital: 'הון ודיבידנד', management: 'הנהלה', macro: 'מאקרו' };
 const SENT = { positive: ['חיובי', 'up'], negative: ['שלילי', 'down'], neutral: ['ניטרלי', 'flat'] };
 const HORIZON = { 5: 'שבוע (5 ימי מסחר)', 20: 'חודש (20 ימי מסחר)', 60: 'רבעון (60 ימי מסחר)' };
 
@@ -132,6 +135,8 @@ export default function Stock({ symbol }) {
         </section>
       )}
 
+      <AiCard ai={data.ai} />
+
       {data.history.length > 1 && (
         <section className="card">
           <h2>מחיר ותחזית</h2>
@@ -158,6 +163,7 @@ export default function Stock({ symbol }) {
                     {SIGNALS[s.key][1]} · משקל בתחזית: <span dir="ltr">{s.weightPct.toFixed(0)}%</span>
                     {s.count ? <> · {s.count} פריטים</> : null}
                     {s.evidence ? <> · {EVIDENCE[s.evidence]}</> : null}
+                    {s.learned ? <> · משקל מותאם לפי דיוק בפועל (×<span dir="ltr">{s.learned.toFixed(2)}</span>)</> : null}
                   </span>
                 </li>
               ))}
@@ -363,6 +369,13 @@ export default function Stock({ symbol }) {
           )}
         </section>
       </div>
+
+      <div className="grid2">
+        <TwinsCard twins={data.insights.twins} />
+        <HypeCard hype={data.insights.hype} />
+      </div>
+      <EarningsMemoryCard memory={data.insights.earningsMemory} />
+      <MacroCard macro={data.macro} />
 
       <section className="card">
         <h2>נתוני עומק</h2>

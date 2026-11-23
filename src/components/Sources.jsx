@@ -12,17 +12,23 @@ const SOURCES = [
   ['ApeWisdom', 'ספירת אזכורים של כל מניה בפורומי משקיעים', 'פעיל'],
   ['SEC', 'דיווחים רשמיים של החברה', 'פעיל'],
   ['Reddit', 'פוסטים מפורומי השקעות', 'תלוי בשרת: חסום בענן, נתמך בהרצה מקומית'],
+  ['משרד האוצר האמריקאי', 'תשואות אג״ח יומיות ושיפוע העקום', 'פעיל'],
+  ['Polymarket', 'הסתברויות של שוקי חיזוי לריבית ולמיתון', 'פעיל'],
+  ['Claude (Anthropic)', 'קריאת הכותרות, דירוג סנטימנט, זיהוי אירועים וסיכום אנליסט', 'מופעל עם מפתח API'],
   ['Yahoo Finance', 'מחירים וחדשות', 'לא מחובר: חוסם את השרת'],
 ];
 
 const FACTORS = [
   ['חזק', 'מומנטום ומגמת מחיר, עדכוני תחזיות רווח של אנליסטים, הפתעה בדוח האחרון'],
-  ['בינוני', 'קונצנזוס ומחירי יעד של אנליסטים, סנטימנט חדשות, מצב השוק הכללי, חוזק יחסי לשוק'],
+  ['בינוני', 'קונצנזוס ומחירי יעד של אנליסטים, סנטימנט חדשות, מצב השוק הכללי, חוזק יחסי לשוק, מגמת הסקטור'],
+  ['נבדק על המניה', 'תאומים היסטוריים: נכנס לתחזית רק אם ניצח את הניחוש הקבוע בבדיקה לאחור על אותה מניה'],
   ['חלש', 'סנטימנט ברשתות ובפורומים, בעלי עניין, מוסדיים, שורט, אופציות'],
 ];
 
 export default function Sources() {
   const { loading, data, error } = useApi('/api/track-record');
+  const ai = useApi('/api/ai/status').data;
+  const learned = data ? Object.entries(data.learned || {}) : [];
   return (
     <article>
       <a className="back" href="#/">→ חזרה לרשימה</a>
@@ -64,6 +70,55 @@ export default function Sources() {
             </p>
           </>
         )}
+      </section>
+
+      <section className="card">
+        <h2>מה המערכת למדה</h2>
+        <p className="small">
+          עם כל תחזית נשמר גם הציון של כל גורם. כשמצטברות לפחות 30 תחזיות שהגיע מועד הבדיקה שלהן, המשקל של כל גורם
+          מותאם לפי שיעור הפגיעה האמיתי שלו (בין חצי לפי אחד וחצי מהמשקל המקורי).
+        </p>
+        {learned.length ? (
+          <div className="table-wrap">
+            <table>
+              <caption className="sr-only">שיעור הפגיעה והמשקל הנלמד של כל גורם</caption>
+              <thead><tr><th>גורם</th><th className="n">תחזיות שנבדקו</th><th className="n">פגיעה בכיוון</th><th className="n">מכפיל משקל</th></tr></thead>
+              <tbody>
+                {learned.map(([key, v]) => (
+                  <tr key={key} className="static">
+                    <td dir="ltr" lang="en">{key}</td>
+                    <td className="n" dir="ltr">{v.samples}</td>
+                    <td className="n" dir="ltr">{fmt.prob(v.hitRate)}</td>
+                    <td className="n" dir="ltr">×{v.multiplier.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted small">עדיין אין מספיק תחזיות שהבשילו כדי ללמוד מהן. המשקלים הם אלה שנקבעו לפי המחקר.</p>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>שכבת ה־AI</h2>
+        {ai ? (
+          <>
+            <p>
+              מצב: <b>{ai.enabled ? 'פעילה' : 'כבויה (לא הוגדר מפתח API)'}</b> · מודל: <span dir="ltr">{ai.model}</span> · עומק חשיבה:{' '}
+              <span dir="ltr">{ai.effort}</span>
+            </p>
+            <dl className="kv">
+              <div><dt>קריאות היום</dt><dd dir="ltr">{ai.calls} / {ai.dailyLimit}</dd></div>
+              <div><dt>נענו מהמטמון</dt><dd dir="ltr">{ai.cacheHits}</dd></div>
+              <div><dt>טוקנים (קלט / פלט)</dt><dd dir="ltr">{ai.inputTokens.toLocaleString('en-US')} / {ai.outputTokens.toLocaleString('en-US')}</dd></div>
+            </dl>
+            <p className="muted small">
+              המודל קורא רק את הכותרות שנאספו, מדרג אותן ומסכם. הוא לא מקבל מחירים ולא מתבקש לחזות מחיר, כדי שידע מוקדם
+              שלו לא יזלוג לתחזית. התוצאה נשמרת 6 שעות לכל מניה כדי לחסוך בעלות.
+            </p>
+          </>
+        ) : <p className="muted small">טוען…</p>}
       </section>
 
       <section className="card">

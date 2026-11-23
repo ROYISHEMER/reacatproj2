@@ -97,7 +97,9 @@ export function buildForecast(closes, inputs = {}) {
   const signals = [];
   const add = (key, score, weight, detail) => {
     if (score == null || Number.isNaN(score)) return;
-    signals.push({ key, score: clamp(score, -1, 1), weight, ...detail });
+    // Weights can be scaled by what the live track record has shown about each factor.
+    const learned = inputs.multipliers?.[key] ?? 1;
+    signals.push({ key, score: clamp(score, -1, 1), weight: weight * learned, ...detail, ...(learned !== 1 ? { learned } : {}) });
   };
   add('technical', tech.score, BASE_WEIGHTS.technical * (0.3 + 0.7 * reliability), { reliability, evidence: 'strong' });
   add('analysts', analystScore(inputs.analysts, price), BASE_WEIGHTS.analysts, { evidence: 'moderate' });

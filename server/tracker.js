@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { learnWeights } from './analysis/insights.js';
 
 const DIR = process.env.DATA_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data');
 const FILE = path.join(DIR, 'predictions.jsonl');
@@ -29,7 +30,9 @@ export function record(symbol, forecast, date = new Date().toISOString().slice(0
   if (seen.has(key)) return;
   seen.add(key);
   const p = (d) => forecast.horizons.find((h) => h.days === d)?.probUp ?? null;
-  const entry = { date, symbol, price: forecast.price, p5: p(5), p20: p(20) };
+  // Factor scores are kept so the system can later measure which factors actually worked.
+  const f = Object.fromEntries(forecast.signals.map((s) => [s.key, Math.round(s.score * 100) / 100]));
+  const entry = { date, symbol, price: forecast.price, p5: p(5), p20: p(20), f };
   try {
     fs.mkdirSync(DIR, { recursive: true });
     fs.appendFileSync(FILE, `${JSON.stringify(entry)}\n`);
@@ -83,5 +86,6 @@ export async function trackRecord(getBars) {
     symbols: symbols.length,
     since: entries.length ? entries.reduce((m, e) => (e.date < m ? e.date : m), entries[0].date) : null,
     horizons: score(entries, barsBySymbol),
+    learned: learnWeights(entries, barsBySymbol),
   };
 }

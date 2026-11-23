@@ -123,3 +123,8 @@ nav a[aria-current="page"] { color: var(--ink); font-weight: 700; border-bottom:
 td { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
 .chips li .muted { margin-inline-start: 6px; }
+
+.points { margin: 4px 0 0; padding-inline-start: 18px; font-size: .92rem; display: grid; gap: 4px; }
+.gauge { position: relative; height: 10px; border-radius: 5px; margin: 14px 0 4px; background: linear-gradient(to right, var(--series), var(--flat-bg) 50%, #eb6834); }
+.gauge i { position: absolute; top: -5px; width: 4px; height: 20px; margin-left: -2px; border-radius: 2px; background: var(--ink); outline: 2px solid var(--surface); }
+.gauge-labels { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); direction: rtl; flex-direction: row-reverse; }

@@ -66,12 +66,19 @@ export function optionsFactor(opt) {
   return { key: 'options', evidence: 'weak', weight: 0.03, score: clamp(-Math.tanh((opt.putCallVolume - 0.7) / 0.5), -1, 1) };
 }
 
-export function buildFactors({ closes, marketCloses, revisions, surprises, insiders, institutions, shortInterest, options }) {
+export function sectorFactor(sectorCloses) {
+  const t = sectorCloses && technicalScore(sectorCloses);
+  if (!t) return null;
+  return { key: 'sector', evidence: 'moderate', weight: 0.06, score: t.score };
+}
+
+export function buildFactors({ closes, marketCloses, sectorCloses, revisions, surprises, insiders, institutions, shortInterest, options }) {
   return [
     revisionsFactor(revisions),
     surpriseFactor(surprises),
     marketFactor(marketCloses),
     relativeStrengthFactor(closes, marketCloses),
+    sectorFactor(sectorCloses),
     insidersFactor(insiders),
     institutionsFactor(institutions),
     shortFactor(shortInterest),

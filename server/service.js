@@ -11,6 +11,10 @@ import { extractEvents } from './analysis/events.js';
 import { buildForecast } from './analysis/forecast.js';
 import { buildFactors } from './analysis/factors.js';
 import { record, trackRecord } from './tracker.js';
+import { getEconomicCalendar, getPredictionMarkets, getSectorCloses, getYields } from './sources/macro.js';
+import { earningsMemory, historicalTwins, hypeGap } from './analysis/insights.js';
+import { analyzeNews } from './ai/analyst.js';
+import { aiConfig, aiStatus } from './ai/client.js';
 
 const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,7}$/;
 export const normalizeSymbol = (s) => {
@@ -82,7 +86,7 @@ export async function getStock(symbol) {
 
   const [
     bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit, forums, buzz,
-    market, revisions, surprises, insiders, institutions, shortInterest, options, margins,
+    market, revisions, surprises, insiders, institutions, shortInterest, options, margins, yields, markets, calendar,
   ] = await Promise.all([
     attempt('history', nasdaq.getHistory(symbol, ac), errors),
     attempt('summary', nasdaq.getSummary(symbol, ac), errors),
@@ -104,11 +108,23 @@ export async function getStock(symbol) {
     stockOnly('shortInterest', () => fund.getShortInterest(symbol)),
     attempt('options', fund.getOptions(symbol, ac), errors),
     stockOnly('margins', () => fund.getMargins(symbol)),
+    attempt('yields', getYields(), errors),
+    attempt('predictionMarkets', getPredictionMarkets(), errors),
+    attempt('calendar', getEconomicCalendar(), errors),
   ]);
 
-  const newsItems = (news || []).map((n) => {
-    const score = scoreText(n.title);
-    return { ...n, sentiment: score, sentimentLabel: label(score) };
+  // Second wave: needs the sector name and the collected headlines.
+  const aiOn = aiConfig().enabled;
+  const [sector, ai] = await Promise.all([
+    summary?.sector ? attempt('sector', getSectorCloses(summary.sector), errors) : null,
+    aiOn && news?.length ? attempt('ai', analyzeNews({ symbol, company: quote.name, news }), errors) : null,
+  ]);
+
+  // With Claude available its reading replaces the word-list score; irrelevant headlines count for less.
+  const newsItems = (news || []).map((n, i) => {
+    const read = ai?.byIndex.get(i);
+    const score = read ? read.sentiment * read.relevance : scoreText(n.title);
+    return { ...n, sentiment: score, sentimentLabel: label(score), ai: read ? { eventType: read.eventType, eventDate: read.eventDate, product: read.product, relevance: read.relevance } : null };
   });
   const newsAgg = aggregate(newsItems.map((n) => ({ score: n.sentiment, at: n.publishedAt })), { halfLifeDays: 4 });
 
@@ -130,7 +146,7 @@ export async function getStock(symbol) {
     { halfLifeDays: 1.5 },
   );
 
-  const events = extractEvents(newsItems);
+  const events = ai ? aiEvents(newsItems) : extractEvents(newsItems);
   if (earningsDate) {
     events.unshift({
       type: 'earnings',
@@ -154,8 +170,12 @@ export async function getStock(symbol) {
     series.push({ date: today, close: quote.price, volume: quote.volume });
   }
 
-  const factors = buildFactors({ closes, marketCloses: market, revisions, surprises, insiders, institutions, shortInterest, options });
-  const forecast = buildForecast(closes, { news: newsAgg, social: socialAgg, analysts, factors });
+  const factors = buildFactors({ closes, marketCloses: market, sectorCloses: sector?.closes, revisions, surprises, insiders, institutions, shortInterest, options });
+  const twins = series.length ? historicalTwins(series) : null;
+  if (twins?.factor) factors.push(twins.factor);
+  const forecast = buildForecast(closes, { news: newsAgg, social: socialAgg, analysts, factors, multipliers: await learnedMultipliers() });
+  const hype = hypeGap({ news: newsAgg, social: socialAgg, buzz, factors });
+  const memory = earningsMemory(series, surprises);
   record(symbol, forecast);
 
   // How much evidence stands behind this page.
@@ -171,6 +191,9 @@ export async function getStock(symbol) {
     ['ApeWisdom', buzz ? 1 : 0],
     ['Reddit', redditPosts.length],
     ['SEC (דיווחים)', filings?.length || 0],
+    ['משרד האוצר האמריקאי (תשואות)', yields ? 1 : 0],
+    ['Polymarket (שוקי חיזוי)', markets?.length || 0],
+    ['לוח אירועים כלכליים', calendar?.length || 0],
   ].map(([name, items]) => ({ name, items, ok: items > 0 }));
   const coverage = {
     sources,
@@ -191,6 +214,16 @@ export async function getStock(symbol) {
     history: series.slice(-260),
     forecast,
     coverage,
+    ai: {
+      enabled: aiOn,
+      used: Boolean(ai),
+      model: ai?.model || null,
+      headlinesRead: ai?.covered || 0,
+      view: ai?.view || null,
+      error: errors.find((e) => e.source === 'ai')?.message || null,
+    },
+    insights: { twins: twins && { ...twins, factor: undefined }, hype, earningsMemory: memory },
+    macro: { yields, predictionMarkets: markets || [], calendar: calendar || [], sectorEtf: sector?.etf || null },
     details: { revisions, surprises: (surprises || []).slice(0, 4), insiders, institutions, shortInterest, options, margins },
     news: { aggregate: newsAgg, items: newsItems.slice(0, 30) },
     social: { aggregate: socialAgg, watchers: social?.watchers ?? null, items: posts.slice(0, 15) },
@@ -203,5 +236,43 @@ export async function getStock(symbol) {
   };
 }
 
+/** Events as read by Claude: typed, dated and tied to the headline they came from. */
+function aiEvents(newsItems, now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  const out = newsItems
+    .filter((n) => n.ai && n.ai.eventType !== 'none' && n.ai.relevance >= 0.5)
+    .map((n) => ({
+      type: n.ai.eventType,
+      title: n.title,
+      url: n.url,
+      source: n.source,
+      publishedAt: n.publishedAt,
+      date: n.ai.eventDate,
+      dateText: null,
+      precision: n.ai.eventDate ? 'day' : null,
+      product: n.ai.product,
+      upcoming: n.ai.eventDate ? n.ai.eventDate >= today : false,
+    }));
+  const rank = (e) => (e.upcoming ? 0 : e.date ? 1 : 2);
+  return out
+    .sort((a, b) => rank(a) - rank(b) || (a.upcoming ? (a.date < b.date ? -1 : 1) : a.publishedAt < b.publishedAt ? 1 : -1))
+    .slice(0, 25);
+}
+
+// Factor weight multipliers learned from the live track record, refreshed hourly.
+const learnedCache = { at: 0, value: {} };
+async function learnedMultipliers() {
+  if (Date.now() - learnedCache.at < 3600000) return learnedCache.value;
+  learnedCache.at = Date.now();
+  try {
+    const { learned } = await trackRecord(barsAnyClass);
+    learnedCache.value = Object.fromEntries(Object.entries(learned).map(([k, v]) => [k, v.multiplier]));
+  } catch {
+    learnedCache.value = {};
+  }
+  return learnedCache.value;
+}
+
 export const getTrackRecord = () => trackRecord(barsAnyClass);
+export const getAiStatus = () => aiStatus();
 export const search = (q) => nasdaq.search(q);
