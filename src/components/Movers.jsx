@@ -4,6 +4,7 @@ import { DIRECTION, fmt, sign, useApi } from '../lib.js';
 const TABS = [
   ['mostActive', 'הנסחרות ביותר (כמות)'],
   ['mostActiveDollar', 'הנסחרות ביותר (מחזור $)'],
+  ['buzz', 'המדוברות בפורומים'],
   ['gainers', 'העולות'],
   ['losers', 'היורדות'],
 ];
@@ -51,6 +52,9 @@ export default function Movers() {
                       <td>
                         <a href={`#/stock/${r.symbol}`} dir="ltr" className="sym">{r.symbol}</a>
                         <span className="name" dir="ltr">{r.name}</span>
+                        {r.mentions != null && (
+                          <span className="name">{r.mentions.toLocaleString('en-US')} אזכורים ב־24 שעות (אתמול: {r.mentionsPrev.toLocaleString('en-US')})</span>
+                        )}
                       </td>
                       <td className="n" dir="ltr">{fmt.price(r.price)}</td>
                       <td className={`n ${sign(r.changePct)}`} dir="ltr">{fmt.pct(r.changePct)}</td>
@@ -64,7 +68,7 @@ export default function Movers() {
               </tbody>
             </table>
           </div>
-          <p className="muted small">{data.asOf} · מקור: Nasdaq · התחזית בטבלה מבוססת על מחיר בלבד; הניתוח המלא בעמוד המניה.</p>
+          <p className="muted small">{data.asOf} · מקורות: Nasdaq, ApeWisdom ·התחזית בטבלה מבוססת על מחיר בלבד; הניתוח המלא בעמוד המניה.</p>
         </>
       )}
     </section>

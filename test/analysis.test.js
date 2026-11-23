@@ -6,6 +6,7 @@ import { extractDate, extractEvents, classify } from '../server/analysis/events.
 import { buildForecast, backtest, technicalScore } from '../server/analysis/forecast.js';
 import { parseRss } from '../server/sources/news.js';
 import { parseListing, redditEnabled } from '../server/sources/reddit.js';
+import { parseHackerNews, parseLemmy, parseMastodon } from '../server/sources/forums.js';
 import { num } from '../server/sources/nasdaq.js';
 import { normalizeSymbol } from '../server/service.js';
 
@@ -96,6 +97,25 @@ test('reddit listing parser', () => {
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, 'https://www.reddit.com/r/stocks/a');
   assert.equal(redditEnabled(), true);
+});
+
+test('forum parsers', () => {
+  const hn = parseHackerNews({ hits: [
+    { objectID: '1', _tags: ['comment'], comment_text: '<p>Nvidia&#x27;s moat is <i>real</i></p>', story_title: 'Nvidia news', created_at: '2026-11-23T20:00:00Z' },
+    { objectID: '2', _tags: ['story'], title: 'Nvidia ships new chip', points: 12, created_at: '2026-11-23T19:00:00Z' },
+  ] });
+  assert.equal(hn[0].text, "Nvidia's moat is real");
+  assert.equal(hn[0].context, 'Nvidia news');
+  assert.equal(hn[1].score, 12);
+  const m = parseMastodon([{ id: '9', content: '<p>$NVDA up</p>', url: 'https://m/9', created_at: '2026-11-23T20:00:00Z', language: 'en' }, { id: '8', content: '<p>x</p>', language: 'de' }]);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].text, '$NVDA up');
+  const l = parseLemmy({ posts: [{ post: { id: 5, name: 'Nvidia stock talk', ap_id: 'https://l/5', published: '2026-11-23T20:00:00Z' }, community: { name: 'stocks' }, counts: { score: 3 } }] });
+  assert.equal(l[0].context, 'c/stocks');
+  const rss = '<rss><item><title>Nvidia jumps</title><link>http://www.bing.com/news/apiclick.aspx?ref=x&amp;url=https%3a%2f%2fexample.com%2fa</link><pubDate>Mon, 23 Nov 2026 06:27:00 GMT</pubDate><News:Source>Example</News:Source></item></rss>';
+  const [item] = parseRss(rss, 'Bing News');
+  assert.equal(item.url, 'https://example.com/a');
+  assert.equal(item.source, 'Example');
 });
 
 test('parsers', () => {

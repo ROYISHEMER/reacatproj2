@@ -1,7 +1,8 @@
 // Assembles data from all sources into API responses.
 import { mapLimit } from './http.js';
 import * as nasdaq from './sources/nasdaq.js';
-import { getNews } from './sources/news.js';
+import { getNews, shortName } from './sources/news.js';
+import { getBuzz, getBuzzRanking, getForums } from './sources/forums.js';
 import { getSocial } from './sources/stocktwits.js';
 import { getReddit, redditEnabled } from './sources/reddit.js';
 import { aggregate, label, scoreText } from './analysis/sentiment.js';
@@ -29,6 +30,21 @@ const moversCache = { at: 0, value: null };
 export async function getMoversWithForecast() {
   if (moversCache.value && Date.now() - moversCache.at < 5 * 60000) return moversCache.value;
   const movers = await nasdaq.getMovers();
+  // Most-discussed tickers in retail forums, priced from Nasdaq.
+  try {
+    const top = (await getBuzzRanking()).filter((r) => normalizeSymbol(r.symbol)).slice(0, 12);
+    const quotes = await mapLimit(top, 4, (r) => nasdaq.getQuote(r.symbol));
+    movers.lists.buzz = top
+      .map((r, i) =>
+        quotes[i]
+          ? { symbol: r.symbol, name: quotes[i].name, price: quotes[i].price, change: quotes[i].change, changePct: quotes[i].changePct, volume: quotes[i].volume, mentions: r.mentions, mentionsPrev: r.mentionsPrev }
+          : null,
+      )
+      .filter(Boolean)
+      .slice(0, 10);
+  } catch {
+    movers.lists.buzz = [];
+  }
   const symbols = [...new Set(Object.values(movers.lists).flat().map((r) => r.symbol))];
   const quick = new Map();
   await mapLimit(symbols, 4, async (symbol) => {
@@ -56,7 +72,7 @@ export async function getStock(symbol) {
   const ac = quote.assetClass;
   const isStock = ac === 'stocks';
 
-  const [bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit] = await Promise.all([
+  const [bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit, forums, buzz] = await Promise.all([
     attempt('history', nasdaq.getHistory(symbol, ac), errors),
     attempt('summary', nasdaq.getSummary(symbol, ac), errors),
     isStock ? attempt('analysts', nasdaq.getAnalysts(symbol), errors) : null,
@@ -67,6 +83,8 @@ export async function getStock(symbol) {
     attempt('news', getNews(symbol, quote.name), errors),
     attempt('social', getSocial(symbol), errors),
     redditEnabled() ? attempt('reddit', getReddit(symbol), errors) : null,
+    attempt('forums', getForums(symbol, shortName(symbol, quote.name)), errors),
+    attempt('buzz', getBuzz(symbol), errors),
   ]);
 
   const newsItems = (news || []).map((n) => {
@@ -83,8 +101,13 @@ export async function getStock(symbol) {
     const score = scoreText(`${r.title}. ${r.body}`);
     return { ...r, sentiment: score, sentimentLabel: label(score) };
   });
+  const forumPosts = (forums?.posts || []).map((p) => {
+    const score = scoreText(p.text);
+    return { ...p, sentiment: score, sentimentLabel: label(score) };
+  });
+  for (const name of forums?.failed || []) errors.push({ source: name, message: 'unavailable' });
   const socialAgg = aggregate(
-    [...posts, ...redditPosts].map((p) => ({ score: p.sentiment, at: p.createdAt })),
+    [...posts, ...redditPosts, ...forumPosts].map((p) => ({ score: p.sentiment, at: p.createdAt })),
     { halfLifeDays: 1.5 },
   );
 
@@ -127,6 +150,8 @@ export async function getStock(symbol) {
     news: { aggregate: newsAgg, items: newsItems.slice(0, 30) },
     social: { aggregate: socialAgg, watchers: social?.watchers ?? null, items: posts.slice(0, 15) },
     reddit: { enabled: redditEnabled(), items: redditPosts.slice(0, 12) },
+    forums: { counts: forums?.counts || {}, items: forumPosts.slice(0, 20) },
+    buzz,
     events,
     filings: filings || [],
     errors,

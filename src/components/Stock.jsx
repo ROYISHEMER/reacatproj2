@@ -5,7 +5,7 @@ const SIGNALS = {
   technical: ['ניתוח טכני', 'מומנטום, מגמה, MACD ו־RSI מתוך היסטוריית המחיר'],
   analysts: ['קונצנזוס אנליסטים', 'מחיר יעד ממוצע ויחס המלצות קנייה/מכירה'],
   news: ['סנטימנט חדשות', 'כותרות מהשבועיים האחרונים, משוקללות לפי עדכניות'],
-  social: ['סנטימנט ברשתות', 'פוסטים של סוחרים ב־Stocktwits'],
+  social: ['סנטימנט ברשתות', 'פוסטים ב־Stocktwits, Hacker News, Mastodon ו־Lemmy'],
 };
 const EVENT_TYPES = { product: 'מוצר / השקה', earnings: 'דוחות ותחזיות', regulatory: 'רגולציה ומשפט', deal: 'עסקאות ושותפויות', capital: 'הון ודיבידנד' };
 const SENT = { positive: ['חיובי', 'up'], negative: ['שלילי', 'down'], neutral: ['ניטרלי', 'flat'] };
@@ -27,7 +27,7 @@ export default function Stock({ symbol }) {
   if (loading) return <p className="state">אוסף נתונים על <b dir="ltr">{symbol}</b>: מחירים, חדשות, רשתות, אנליסטים…</p>;
   if (error) return <p className="state err">לא ניתן לטעון את <b dir="ltr">{symbol}</b>: {error.message}</p>;
 
-  const { quote, summary, forecast: f, analysts, news, social, reddit, events, filings, earningsForecast, profile } = data;
+  const { quote, summary, forecast: f, analysts, news, social, reddit, forums, buzz, events, filings, earningsForecast, profile } = data;
   const d = f ? DIRECTION[f.direction] : null;
   const main = f?.horizons.find((h) => h.days === 20);
   const upcoming = events.filter((e) => e.upcoming);
@@ -263,6 +263,24 @@ export default function Stock({ symbol }) {
               <li key={p.id}>
                 <span dir="ltr" className="post">{p.body.length > 220 ? `${p.body.slice(0, 220)}…` : p.body}</span>
                 <span className="meta"><Sent label={p.sentimentLabel} /> {fmt.ago(p.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+          <h3>פורומים ורשתות נוספות</h3>
+          {buzz && (
+            <p className="small">
+              מקום <b dir="ltr">{buzz.rank}</b> באזכורים בפורומי משקיעים: <b dir="ltr">{buzz.mentions.toLocaleString('en-US')}</b> אזכורים
+              ב־24 שעות (אתמול: <span dir="ltr">{buzz.mentionsPrev.toLocaleString('en-US')}</span>)
+            </p>
+          )}
+          <p className="small muted">
+            {Object.entries(forums.counts).map(([k, v]) => `${k}: ${v}`).join(' · ') || 'אין נתונים'} · פוסטים מהשבוע האחרון
+          </p>
+          <ul className="feed">
+            {forums.items.slice(0, 8).map((p) => (
+              <li key={p.id}>
+                <a href={p.url} target="_blank" rel="noreferrer" dir="ltr" className="post">{p.text.length > 200 ? `${p.text.slice(0, 200)}…` : p.text}</a>
+                <span className="meta"><Sent label={p.sentimentLabel} /> <span dir="ltr">{p.source}{p.context ? ` · ${p.context}` : ''}</span> · {fmt.ago(p.createdAt)}</span>
               </li>
             ))}
           </ul>
