@@ -24,7 +24,7 @@ Optional settings are listed in `.env.example`. No API keys are required.
 | Nasdaq data API (`api.nasdaq.com`) | most-active lists, quotes, daily history, analyst targets, EPS forecasts, earnings date, filings, profile |
 | Google News RSS (`news.google.com`) | headlines per company (general + launch/product query) |
 | Stocktwits (`api.stocktwits.com`) | trader posts and bullish/bearish tags |
-| Reddit official API (optional, needs `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET`) | posts mentioning the ticker in investing subreddits |
+| Reddit (`www.reddit.com` public JSON, no account; official API if keys are set) | posts mentioning the ticker in investing subreddits |
 
 Each source fails independently: the stock page still renders and lists what was unavailable.
 

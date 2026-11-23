@@ -267,8 +267,11 @@ export default function Stock({ symbol }) {
             ))}
           </ul>
           <h3>Reddit</h3>
-          {!reddit.enabled && <p className="muted small">מקור Reddit אינו מוגדר (נדרשים REDDIT_CLIENT_ID ו־REDDIT_CLIENT_SECRET).</p>}
-          {reddit.enabled && reddit.items.length === 0 && <p className="muted small">לא נמצאו פוסטים מהשבוע האחרון.</p>}
+          {data.errors.some((e) => e.source === 'reddit') ? (
+            <p className="muted small">Reddit לא זמין מהשרת הזה כרגע.</p>
+          ) : (
+            reddit.items.length === 0 && <p className="muted small">{reddit.enabled ? 'לא נמצאו פוסטים מהשבוע האחרון.' : 'מקור Reddit כבוי.'}</p>
+          )}
           {reddit.items.length > 0 && (
             <ul className="feed">
               {reddit.items.slice(0, 6).map((r) => (

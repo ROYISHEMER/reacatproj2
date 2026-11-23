@@ -1,10 +1,12 @@
-// Reddit official API (OAuth, app-only). Enabled only when REDDIT_CLIENT_ID and
-// REDDIT_CLIENT_SECRET are set (create a "script" app at reddit.com/prefs/apps).
+// Reddit posts about a ticker. Works without any account: reads Reddit's public JSON.
+// If REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are set, uses the official OAuth API instead.
+// Set REDDIT_DISABLED=1 to switch the source off.
 const SUBREDDITS = process.env.REDDIT_SUBREDDITS || 'stocks+wallstreetbets+investing+StockMarket+options';
 const UA = 'stock-forecast-app/0.1';
 let token = { value: null, expires: 0 };
 
-export const redditEnabled = () => Boolean(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET);
+const hasKeys = () => Boolean(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET);
+export const redditEnabled = () => process.env.REDDIT_DISABLED !== '1';
 
 async function getToken() {
   if (token.value && token.expires > Date.now()) return token.value;
@@ -41,13 +43,16 @@ export function parseListing(json) {
 
 /** Posts from the last week mentioning the ticker in investing subreddits. */
 export async function getReddit(symbol) {
-  const t = await getToken();
   const q = encodeURIComponent(`${symbol} OR $${symbol}`);
-  const res = await fetch(
-    `https://oauth.reddit.com/r/${SUBREDDITS}/search?q=${q}&restrict_sr=1&sort=new&t=week&limit=50&raw_json=1`,
-    { headers: { Authorization: `Bearer ${t}`, 'User-Agent': UA }, signal: AbortSignal.timeout(15000) },
-  );
-  if (!res.ok) throw new Error(`HTTP ${res.status} from oauth.reddit.com`);
+  const query = `q=${q}&restrict_sr=1&sort=new&t=week&limit=50&raw_json=1`;
+  const headers = { 'User-Agent': UA, Accept: 'application/json' };
+  let url = `https://www.reddit.com/r/${SUBREDDITS}/search.json?${query}`;
+  if (hasKeys()) {
+    headers.Authorization = `Bearer ${await getToken()}`;
+    url = `https://oauth.reddit.com/r/${SUBREDDITS}/search?${query}`;
+  }
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).host}`);
   const safe = symbol.replace(/[.-]/g, (ch) => `\\${ch}`);
   const re = new RegExp(`(^|[^A-Za-z])\\$?${safe}([^A-Za-z]|$)`);
   return parseListing(await res.json()).filter((p) => re.test(p.title) || re.test(p.body));

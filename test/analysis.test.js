@@ -95,7 +95,7 @@ test('reddit listing parser', () => {
   const posts = parseListing({ data: { children: [{ data: post }, { data: sticky }] } });
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, 'https://www.reddit.com/r/stocks/a');
-  assert.equal(redditEnabled(), false);
+  assert.equal(redditEnabled(), true);
 });
 
 test('parsers', () => {
