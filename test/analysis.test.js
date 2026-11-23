@@ -4,6 +4,8 @@ import { rsi, sma, normCdf } from '../server/analysis/indicators.js';
 import { scoreText, aggregate } from '../server/analysis/sentiment.js';
 import { extractDate, extractEvents, classify } from '../server/analysis/events.js';
 import { buildForecast, backtest, technicalScore } from '../server/analysis/forecast.js';
+import { buildFactors, insidersFactor, optionsFactor, relativeStrengthFactor, revisionsFactor, shortFactor, surpriseFactor } from '../server/analysis/factors.js';
+import { score } from '../server/tracker.js';
 import { parseRss } from '../server/sources/news.js';
 import { parseListing, redditEnabled } from '../server/sources/reddit.js';
 import { parseHackerNews, parseLemmy, parseMastodon } from '../server/sources/forums.js';
@@ -97,6 +99,40 @@ test('reddit listing parser', () => {
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, 'https://www.reddit.com/r/stocks/a');
   assert.equal(redditEnabled(), true);
+});
+
+test('factors score in the expected direction', () => {
+  const now = Date.parse('2026-11-23T00:00:00Z');
+  assert.ok(revisionsFactor({ yearChangePct: 4, up: 8, down: 1 }).score > 0.5);
+  assert.ok(revisionsFactor({ yearChangePct: -4, up: 1, down: 8 }).score < -0.5);
+  assert.equal(revisionsFactor(null), null);
+  const fresh = surpriseFactor([{ surprisePct: 12, reported: '2026-11-20' }], now);
+  const stale = surpriseFactor([{ surprisePct: 12, reported: '2026-06-01' }], now);
+  assert.ok(fresh.score > stale.score && stale.score > 0, 'drift fades with time');
+  assert.ok(surpriseFactor([{ surprisePct: -15, reported: '2026-11-20' }], now).score < 0);
+  assert.ok(insidersFactor({ buys3m: 3, sells3m: 0, sharesBought3m: 1000, sharesSold3m: 0 }).score > 0.9);
+  assert.equal(insidersFactor({ buys3m: 0, sells3m: 2, sharesBought3m: 0, sharesSold3m: 10 }).score, 0);
+  assert.ok(shortFactor({ changePct: 30 }).score < 0);
+  assert.ok(optionsFactor({ putCallVolume: 1.6 }).score < 0 && optionsFactor({ putCallVolume: 0.3 }).score > 0);
+  const up = series(300, 0.003, 0.005);
+  const flat = series(300, 0, 0.005, 5);
+  assert.ok(relativeStrengthFactor(up, flat).score > 0);
+  const all = buildFactors({ closes: up, marketCloses: flat, revisions: { yearChangePct: 2, up: 3, down: 1 } });
+  assert.deepEqual(all.map((f) => f.key), ['revisions', 'market', 'relative']);
+  const f = buildForecast(up, { factors: all, withBacktest: false });
+  assert.ok(f.signals.some((s) => s.key === 'revisions'));
+  assert.ok(f.agreement >= 0 && f.agreement <= 1);
+});
+
+test('backtest reports a Brier score and the tracker scores logged forecasts', () => {
+  const bt = backtest(series(400, 0.002, 0.01, 3), 20);
+  assert.ok(bt.brier > 0 && bt.brier < 0.5);
+  const bars = Array.from({ length: 30 }, (_, i) => ({ date: `2026-10-${String(i + 1).padStart(2, '0')}`, close: 100 + i }));
+  const res = score([{ symbol: 'X', date: '2026-10-01', price: 100, p5: 0.7, p20: 0.4 }, { symbol: 'Y', date: '2026-10-01', price: 1, p5: 0.6, p20: 0.6 }], { X: bars });
+  assert.equal(res[0].matured, 1);
+  assert.equal(res[0].hitRate, 1);
+  assert.ok(Math.abs(res[0].brier - 0.09) < 1e-9);
+  assert.equal(res[1].hitRate, 0);
 });
 
 test('forum parsers', () => {

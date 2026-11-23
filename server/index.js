@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import { getMoversWithForecast, getStock, normalizeSymbol, search } from './service.js';
+import { getMoversWithForecast, getStock, getTrackRecord, normalizeSymbol, search } from './service.js';
 
 const app = express();
 const dist = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
@@ -18,6 +18,7 @@ const wrap = (fn) => async (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/movers', wrap(() => getMoversWithForecast()));
+app.get('/api/track-record', wrap(() => getTrackRecord()));
 app.get(
   '/api/search',
   wrap((req) => {

@@ -27,8 +27,8 @@ export default function Movers() {
           </button>
         ))}
       </div>
-      {loading && <p className="state">טוען נתוני שוק ומחשב תחזיות…</p>}
-      {error && <p className="state err">טעינת הנתונים נכשלה: {error.message}</p>}
+      {loading && <p className="state" role="status">טוען נתוני שוק ומחשב תחזיות…</p>}
+      {error && <p className="state err" role="alert">טעינת הנתונים נכשלה: {error.message}</p>}
       {data && (
         <>
           <div className="card table-wrap">

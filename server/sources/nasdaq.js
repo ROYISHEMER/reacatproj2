@@ -12,7 +12,7 @@ export function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-async function api(path, opts) {
+export async function api(path, opts) {
   const json = await fetchJson(`${BASE}${path}`, opts);
   if (!json || json.data == null) {
     const msg = json?.status?.bCodeMessage?.[0]?.errorMessage || 'no data';

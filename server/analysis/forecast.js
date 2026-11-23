@@ -5,7 +5,9 @@ import { clamp, logReturns, macd, mean, normCdf, rsi, sma, stdev } from './indic
 export const HORIZONS = [5, 20, 60]; // trading days
 const MIN_BARS = 60;
 const SIGNAL_STRENGTH = 0.08; // a full-strength signal shifts daily drift by this many daily sigmas
-const BASE_WEIGHTS = { technical: 0.45, analysts: 0.2, news: 0.25, social: 0.1 };
+const BASE_WEIGHTS = { technical: 0.3, analysts: 0.12, news: 0.14, social: 0.05 };
+/** Probability of a rise over `h` days implied by a signal score alone. */
+const signalProb = (score, h) => normCdf(SIGNAL_STRENGTH * score * Math.sqrt(h));
 
 /** Technical score in [-1, 1] from price history (oldest first). */
 export function technicalScore(closes) {
@@ -46,6 +48,7 @@ export function backtest(closes, horizon) {
   let n = 0;
   let hits = 0;
   let ups = 0;
+  let brier = 0;
   for (let t = 200; t + horizon < closes.length; t++) {
     const ts = technicalScore(closes.slice(0, t + 1));
     if (!ts || Math.abs(ts.score) < 0.1) continue;
@@ -53,8 +56,11 @@ export function backtest(closes, horizon) {
     n++;
     if (up) ups++;
     if (ts.score > 0 === up) hits++;
+    brier += (signalProb(ts.score, horizon) - (up ? 1 : 0)) ** 2;
   }
-  return n ? { horizon, samples: n, hitRate: hits / n, upRate: ups / n } : { horizon, samples: 0, hitRate: null, upRate: null };
+  if (!n) return { horizon, samples: 0, hitRate: null, upRate: null, brier: null, brierSkill: null };
+  // Brier score: mean squared error of the probability. A coin flip scores 0.25; skill > 0 beats it.
+  return { horizon, samples: n, hitRate: hits / n, upRate: ups / n, brier: brier / n, brierSkill: 1 - brier / n / 0.25 };
 }
 
 function analystScore(analysts, price) {
@@ -93,14 +99,19 @@ export function buildForecast(closes, inputs = {}) {
     if (score == null || Number.isNaN(score)) return;
     signals.push({ key, score: clamp(score, -1, 1), weight, ...detail });
   };
-  add('technical', tech.score, BASE_WEIGHTS.technical * (0.3 + 0.7 * reliability), { reliability });
-  add('analysts', analystScore(inputs.analysts, price), BASE_WEIGHTS.analysts, {});
-  if (inputs.news?.count) add('news', inputs.news.score, BASE_WEIGHTS.news, { count: inputs.news.count });
-  if (inputs.social?.count) add('social', inputs.social.score, BASE_WEIGHTS.social, { count: inputs.social.count });
+  add('technical', tech.score, BASE_WEIGHTS.technical * (0.3 + 0.7 * reliability), { reliability, evidence: 'strong' });
+  add('analysts', analystScore(inputs.analysts, price), BASE_WEIGHTS.analysts, { evidence: 'moderate' });
+  if (inputs.news?.count) add('news', inputs.news.score, BASE_WEIGHTS.news, { count: inputs.news.count, evidence: 'moderate' });
+  if (inputs.social?.count) add('social', inputs.social.score, BASE_WEIGHTS.social, { count: inputs.social.count, evidence: 'weak' });
+  for (const f of inputs.factors || []) add(f.key, f.score, f.weight, { evidence: f.evidence });
 
   const wSum = signals.reduce((s, x) => s + x.weight, 0);
   const combined = wSum ? signals.reduce((s, x) => s + x.score * x.weight, 0) / wSum : 0;
   for (const s of signals) s.weightPct = wSum ? (s.weight / wSum) * 100 : 0;
+  // Share of the model's weight that points the same way as the final call.
+  const active = signals.filter((s) => Math.abs(s.score) >= 0.1);
+  const activeW = active.reduce((s, x) => s + x.weight, 0);
+  const agreement = activeW ? active.filter((s) => Math.sign(s.score) === Math.sign(combined)).reduce((s, x) => s + x.weight, 0) / activeW : null;
 
   // Daily drift: heavily shrunk historical mean + signal tilt.
   const histMu = clamp(mean(long) * 0.2, -0.0008, 0.0008);
@@ -128,7 +139,7 @@ export function buildForecast(closes, inputs = {}) {
   }
 
   const p20 = horizons[1].probUp;
-  const agree = signals.length > 1 && signals.every((s) => Math.sign(s.score) === Math.sign(combined) || Math.abs(s.score) < 0.1);
+  const agree = signals.length > 1 && agreement != null && agreement >= 0.7;
   let conf = Math.abs(p20 - 0.5) >= 0.09 ? 2 : Math.abs(p20 - 0.5) >= 0.04 ? 1 : 0;
   if (conf > 0 && !agree) conf--;
   if (conf > 0 && (closes.length < 250 || (bt20?.samples >= 60 && bt20.hitRate < 0.5))) conf--;
@@ -138,6 +149,7 @@ export function buildForecast(closes, inputs = {}) {
     direction: p20 > 0.53 ? 'up' : p20 < 0.47 ? 'down' : 'flat',
     confidence: ['low', 'medium', 'high'][conf],
     combinedScore: combined,
+    agreement,
     dailyVolatilityPct: sigma * 100,
     annualVolatilityPct: sigma * Math.sqrt(252) * 100,
     horizons,

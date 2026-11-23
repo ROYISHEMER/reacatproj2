@@ -6,7 +6,25 @@ const SIGNALS = {
   analysts: ['קונצנזוס אנליסטים', 'מחיר יעד ממוצע ויחס המלצות קנייה/מכירה'],
   news: ['סנטימנט חדשות', 'כותרות מהשבועיים האחרונים, משוקללות לפי עדכניות'],
   social: ['סנטימנט ברשתות', 'פוסטים ב־Stocktwits, Hacker News, Mastodon ו־Lemmy'],
+  revisions: ['עדכוני תחזיות רווח', 'האם האנליסטים העלו או הורידו את תחזיות הרווח בחודש האחרון'],
+  surprise: ['הפתעה בדוח האחרון', 'רווח בפועל מול הצפי; מניות נוטות להמשיך בכיוון ההפתעה'],
+  market: ['מצב השוק הכללי', 'המגמה של מדד S&P 500'],
+  relative: ['חוזק יחסי לשוק', 'ביצועי המניה מול S&P 500 ב־60 ימי המסחר האחרונים'],
+  insiders: ['בעלי עניין', 'קניות ומכירות של מנהלים ודירקטורים ב־3 חודשים'],
+  institutions: ['גופים מוסדיים', 'האם קרנות הגדילו או הקטינו החזקות'],
+  short: ['פוזיציות שורט', 'שינוי בהיקף המכירות בחסר'],
+  options: ['שוק האופציות', 'יחס אופציות מכר (Put) לרכש (Call)'],
 };
+const EVIDENCE = { strong: 'ביסוס מחקרי חזק', moderate: 'ביסוס מחקרי בינוני', weak: 'ביסוס מחקרי חלש' };
+
+// Plain-language summary of what drives the forecast.
+function summarize(f) {
+  const ranked = f.signals.map((s) => ({ ...s, impact: s.score * s.weight })).filter((s) => Math.abs(s.score) >= 0.1);
+  const names = (list) => list.slice(0, 3).map((s) => SIGNALS[s.key]?.[0] || s.key).join(', ');
+  const pos = ranked.filter((s) => s.impact > 0).sort((a, b) => b.impact - a.impact);
+  const neg = ranked.filter((s) => s.impact < 0).sort((a, b) => a.impact - b.impact);
+  return { pos: names(pos), neg: names(neg) };
+}
 const EVENT_TYPES = { product: 'מוצר / השקה', earnings: 'דוחות ותחזיות', regulatory: 'רגולציה ומשפט', deal: 'עסקאות ושותפויות', capital: 'הון ודיבידנד' };
 const SENT = { positive: ['חיובי', 'up'], negative: ['שלילי', 'down'], neutral: ['ניטרלי', 'flat'] };
 const HORIZON = { 5: 'שבוע (5 ימי מסחר)', 20: 'חודש (20 ימי מסחר)', 60: 'רבעון (60 ימי מסחר)' };
@@ -24,12 +42,14 @@ const Sent = ({ label }) => <span className={`pill ${SENT[label][1]}`}>{SENT[lab
 
 export default function Stock({ symbol }) {
   const { loading, data, error } = useApi(`/api/stock/${symbol}`);
-  if (loading) return <p className="state">אוסף נתונים על <b dir="ltr">{symbol}</b>: מחירים, חדשות, רשתות, אנליסטים…</p>;
-  if (error) return <p className="state err">לא ניתן לטעון את <b dir="ltr">{symbol}</b>: {error.message}</p>;
+  if (loading) return <p className="state" role="status">אוסף נתונים על <b dir="ltr">{symbol}</b>: מחירים, חדשות, רשתות, אנליסטים…</p>;
+  if (error) return <p className="state err" role="alert">לא ניתן לטעון את <b dir="ltr">{symbol}</b>: {error.message}</p>;
 
   const { quote, summary, forecast: f, analysts, news, social, reddit, forums, buzz, events, filings, earningsForecast, profile } = data;
   const d = f ? DIRECTION[f.direction] : null;
   const main = f?.horizons.find((h) => h.days === 20);
+  const { coverage, details: x } = data;
+  const summary2 = f ? summarize(f) : {};
   const upcoming = events.filter((e) => e.upcoming);
   const otherEvents = events.filter((e) => !e.upcoming).slice(0, 10);
   const totalRatings = analysts ? analysts.buy + analysts.hold + analysts.sell : 0;
@@ -49,7 +69,7 @@ export default function Stock({ symbol }) {
         </div>
       </div>
 
-      {!f && <p className="state">אין מספיק היסטוריית מסחר (נדרשים לפחות 60 ימים) כדי לחשב תחזית למניה זו.</p>}
+      {!f && <p className="state" role="status">אין מספיק היסטוריית מסחר (נדרשים לפחות 60 ימים) כדי לחשב תחזית למניה זו.</p>}
 
       {f && (
         <section className="card hero">
@@ -87,6 +107,31 @@ export default function Stock({ symbol }) {
         </section>
       )}
 
+      {f && (
+        <section className="card" aria-labelledby="bottom-line">
+          <h2 id="bottom-line">בשורה התחתונה</h2>
+          <p>
+            המודל מעריך סיכוי של <b dir="ltr">{fmt.prob(main.probUp)}</b> שהמניה תהיה גבוהה יותר בעוד חודש, ברמת ביטחון{' '}
+            <b>{CONFIDENCE[f.confidence]}</b>.
+            {summary2.pos && <> בעד עלייה: <b>{summary2.pos}</b>.</>}
+            {summary2.neg && <> נגד: <b>{summary2.neg}</b>.</>}
+            {f.agreement != null && <> <span dir="ltr">{fmt.prob(f.agreement)}</span> ממשקל הגורמים הפעילים מצביעים לאותו כיוון.</>}
+          </p>
+          <p className="small muted">
+            הניתוח מבוסס על <b>{coverage.dataPoints.toLocaleString('en-US')}</b> נקודות מידע מ־<b>{coverage.active}</b> מתוך {coverage.total} מקורות
+            ועל <b>{coverage.factors}</b> גורמים.
+          </p>
+          <ul className="chips" aria-label="מקורות המידע לניתוח">
+            {coverage.sources.map((s) => (
+              <li key={s.name} className={s.ok ? 'ok' : 'off'}>
+                <span aria-hidden="true">{s.ok ? '✓' : '✕'}</span> {s.name}
+                <span className="muted" dir="ltr"> {s.ok ? s.items.toLocaleString('en-US') : 'לא זמין'}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {data.history.length > 1 && (
         <section className="card">
           <h2>מחיר ותחזית</h2>
@@ -98,8 +143,9 @@ export default function Stock({ symbol }) {
         <div className="grid2">
           <section className="card">
             <h2>ממה מורכבת התחזית</h2>
+            <p className="small muted">{f.signals.length} גורמים, מסודרים לפי המשקל שלהם בתחזית.</p>
             <ul className="signals">
-              {f.signals.map((s) => (
+              {[...f.signals].sort((a, b) => b.weight - a.weight).map((s) => (
                 <li key={s.key}>
                   <div className="sig-top">
                     <b>{SIGNALS[s.key][0]}</b>
@@ -111,6 +157,7 @@ export default function Stock({ symbol }) {
                   <span className="muted small">
                     {SIGNALS[s.key][1]} · משקל בתחזית: <span dir="ltr">{s.weightPct.toFixed(0)}%</span>
                     {s.count ? <> · {s.count} פריטים</> : null}
+                    {s.evidence ? <> · {EVIDENCE[s.evidence]}</> : null}
                   </span>
                 </li>
               ))}
@@ -139,7 +186,11 @@ export default function Stock({ symbol }) {
               </table>
             </div>
             <p className="muted small">
-              50% שקול להטלת מטבע. חדשות וסנטימנט אינם נבדקים לאחור כי אין להם ארכיון היסטורי. מבוסס על {f.bars} ימי מסחר.
+              50% שקול להטלת מטבע. הבדיקה מכסה רק את האות הטכני: לשאר הגורמים אין ארכיון היסטורי, ולכן הדיוק של התחזית
+              המלאה נמדד מעכשיו והלאה ב<a href="#/sources">דף המקורות והדיוק</a>. מבוסס על {f.bars} ימי מסחר.
+              {f.backtest[1]?.brierSkill != null && (
+                <> מדד Brier ל־20 יום: <span dir="ltr">{f.backtest[1].brier.toFixed(3)}</span> (מתחת ל־0.25 עדיף על ניחוש).</>
+              )}
             </p>
             <dl className="kv">
               <div><dt>RSI (14)</dt><dd dir="ltr">{f.technical.rsi?.toFixed(0) ?? '—'}</dd></div>
@@ -312,6 +363,59 @@ export default function Stock({ symbol }) {
           )}
         </section>
       </div>
+
+      <section className="card">
+        <h2>נתוני עומק</h2>
+        <div className="grid3">
+          <div>
+            <h3>דוחות אחרונים מול הצפי</h3>
+            {x.surprises?.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>רבעון</th><th className="n">רווח למניה</th><th className="n">צפי</th><th className="n">הפתעה</th></tr></thead>
+                  <tbody>
+                    {x.surprises.map((s) => (
+                      <tr key={s.quarter} className="static">
+                        <td dir="ltr">{s.quarter}</td>
+                        <td className="n" dir="ltr">{s.eps ?? '—'}</td>
+                        <td className="n" dir="ltr">{s.consensus ?? '—'}</td>
+                        <td className={`n ${sign(s.surprisePct)}`} dir="ltr">{fmt.pct(s.surprisePct, 1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="muted small">אין נתונים.</p>}
+            {x.revisions && (
+              <p className="small">
+                תחזית הרווח השנתית השתנתה ב־<b dir="ltr" className={sign(x.revisions.yearChangePct)}>{fmt.pct(x.revisions.yearChangePct, 1)}</b> בחודש האחרון
+                · עדכונים כלפי מעלה: <b>{x.revisions.up}</b> · כלפי מטה: <b>{x.revisions.down}</b>
+              </p>
+            )}
+          </div>
+          <div>
+            <h3>מי קונה ומי מוכר</h3>
+            <dl className="kv two">
+              <div><dt>בעלי עניין: קניות (3 ח׳)</dt><dd dir="ltr">{x.insiders?.buys3m ?? '—'}</dd></div>
+              <div><dt>בעלי עניין: מכירות (3 ח׳)</dt><dd dir="ltr">{x.insiders?.sells3m ?? '—'}</dd></div>
+              <div><dt>מוסדיים שהגדילו</dt><dd dir="ltr">{x.institutions?.increasedHolders?.toLocaleString('en-US') ?? '—'}</dd></div>
+              <div><dt>מוסדיים שהקטינו</dt><dd dir="ltr">{x.institutions?.decreasedHolders?.toLocaleString('en-US') ?? '—'}</dd></div>
+              <div><dt>אחזקת מוסדיים</dt><dd dir="ltr">{x.institutions?.ownershipPct != null ? `${x.institutions.ownershipPct}%` : '—'}</dd></div>
+            </dl>
+          </div>
+          <div>
+            <h3>שורט, אופציות ורווחיות</h3>
+            <dl className="kv two">
+              <div><dt>שינוי בשורט</dt><dd dir="ltr">{fmt.pct(x.shortInterest?.changePct, 1)}</dd></div>
+              <div><dt>ימים לכיסוי שורט</dt><dd dir="ltr">{x.shortInterest?.daysToCover?.toFixed(1) ?? '—'}</dd></div>
+              <div><dt>יחס Put/Call (מחזור)</dt><dd dir="ltr">{x.options?.putCallVolume?.toFixed(2) ?? '—'}</dd></div>
+              <div><dt>יחס Put/Call (פוזיציות)</dt><dd dir="ltr">{x.options?.putCallOpenInterest?.toFixed(2) ?? '—'}</dd></div>
+              <div><dt>שולי רווח תפעולי</dt><dd dir="ltr">{x.margins?.operatingMarginPct != null ? `${x.margins.operatingMarginPct.toFixed(1)}%` : '—'}</dd></div>
+              <div><dt>שולי רווח נקי</dt><dd dir="ltr">{x.margins?.profitMarginPct != null ? `${x.margins.profitMarginPct.toFixed(1)}%` : '—'}</dd></div>
+            </dl>
+          </div>
+        </div>
+      </section>
 
       {profile?.description && (
         <section className="card">

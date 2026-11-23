@@ -1,6 +1,7 @@
 // Assembles data from all sources into API responses.
 import { mapLimit } from './http.js';
 import * as nasdaq from './sources/nasdaq.js';
+import * as fund from './sources/fundamentals.js';
 import { getNews, shortName } from './sources/news.js';
 import { getBuzz, getBuzzRanking, getForums } from './sources/forums.js';
 import { getSocial } from './sources/stocktwits.js';
@@ -8,6 +9,8 @@ import { getReddit, redditEnabled } from './sources/reddit.js';
 import { aggregate, label, scoreText } from './analysis/sentiment.js';
 import { extractEvents } from './analysis/events.js';
 import { buildForecast } from './analysis/forecast.js';
+import { buildFactors } from './analysis/factors.js';
+import { record, trackRecord } from './tracker.js';
 
 const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,7}$/;
 export const normalizeSymbol = (s) => {
@@ -24,6 +27,15 @@ async function attempt(name, promise, errors) {
     return null;
   }
 }
+
+const barsAnyClass = async (symbol) => {
+  try {
+    return await nasdaq.getHistory(symbol, 'stocks');
+  } catch {
+    return nasdaq.getHistory(symbol, 'etf');
+  }
+};
+const marketCloses = async () => (await nasdaq.getHistory('SPY', 'etf')).map((b) => b.close);
 
 const moversCache = { at: 0, value: null };
 
@@ -48,12 +60,7 @@ export async function getMoversWithForecast() {
   const symbols = [...new Set(Object.values(movers.lists).flat().map((r) => r.symbol))];
   const quick = new Map();
   await mapLimit(symbols, 4, async (symbol) => {
-    let bars;
-    try {
-      bars = await nasdaq.getHistory(symbol, 'stocks');
-    } catch {
-      bars = await nasdaq.getHistory(symbol, 'etf');
-    }
+    const bars = await barsAnyClass(symbol);
     const f = buildForecast(bars.map((b) => b.close), { withBacktest: false });
     if (f) {
       const h = f.horizons.find((x) => x.days === 20);
@@ -71,20 +78,32 @@ export async function getStock(symbol) {
   const quote = await nasdaq.getQuote(symbol); // throws if the symbol is unknown
   const ac = quote.assetClass;
   const isStock = ac === 'stocks';
+  const stockOnly = (name, fn) => (isStock ? attempt(name, fn(), errors) : null);
 
-  const [bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit, forums, buzz] = await Promise.all([
+  const [
+    bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit, forums, buzz,
+    market, revisions, surprises, insiders, institutions, shortInterest, options, margins,
+  ] = await Promise.all([
     attempt('history', nasdaq.getHistory(symbol, ac), errors),
     attempt('summary', nasdaq.getSummary(symbol, ac), errors),
-    isStock ? attempt('analysts', nasdaq.getAnalysts(symbol), errors) : null,
-    isStock ? attempt('earningsForecast', nasdaq.getEarningsForecast(symbol), errors) : null,
-    isStock ? attempt('earningsDate', nasdaq.getEarningsDate(symbol), errors) : null,
-    isStock ? attempt('filings', nasdaq.getFilings(symbol), errors) : null,
-    isStock ? attempt('profile', nasdaq.getProfile(symbol), errors) : null,
+    stockOnly('analysts', () => nasdaq.getAnalysts(symbol)),
+    stockOnly('earningsForecast', () => nasdaq.getEarningsForecast(symbol)),
+    stockOnly('earningsDate', () => nasdaq.getEarningsDate(symbol)),
+    stockOnly('filings', () => nasdaq.getFilings(symbol)),
+    stockOnly('profile', () => nasdaq.getProfile(symbol)),
     attempt('news', getNews(symbol, quote.name), errors),
     attempt('social', getSocial(symbol), errors),
     redditEnabled() ? attempt('reddit', getReddit(symbol), errors) : null,
     attempt('forums', getForums(symbol, shortName(symbol, quote.name)), errors),
     attempt('buzz', getBuzz(symbol), errors),
+    attempt('market', marketCloses(), errors),
+    stockOnly('revisions', () => fund.getRevisions(symbol)),
+    stockOnly('surprises', () => fund.getSurprises(symbol)),
+    stockOnly('insiders', () => fund.getInsiders(symbol)),
+    stockOnly('institutions', () => fund.getInstitutions(symbol)),
+    stockOnly('shortInterest', () => fund.getShortInterest(symbol)),
+    attempt('options', fund.getOptions(symbol, ac), errors),
+    stockOnly('margins', () => fund.getMargins(symbol)),
   ]);
 
   const newsItems = (news || []).map((n) => {
@@ -135,7 +154,31 @@ export async function getStock(symbol) {
     series.push({ date: today, close: quote.price, volume: quote.volume });
   }
 
-  const forecast = buildForecast(closes, { news: newsAgg, social: socialAgg, analysts });
+  const factors = buildFactors({ closes, marketCloses: market, revisions, surprises, insiders, institutions, shortInterest, options });
+  const forecast = buildForecast(closes, { news: newsAgg, social: socialAgg, analysts, factors });
+  record(symbol, forecast);
+
+  // How much evidence stands behind this page.
+  const sources = [
+    ['Nasdaq · מחירים', series.length],
+    ['Nasdaq · אנליסטים ותחזיות', (analysts ? analysts.buy + analysts.hold + analysts.sell : 0) + (earningsForecast?.quarterly?.length || 0)],
+    ['Nasdaq · דוחות, בעלי עניין, מוסדיים, שורט, אופציות', [revisions, surprises?.length, insiders, institutions, shortInterest, options, margins].filter(Boolean).length],
+    ['חדשות (Google, Bing, Nasdaq)', newsItems.length],
+    ['Stocktwits', posts.length],
+    ['Hacker News', forums?.counts?.['Hacker News'] || 0],
+    ['Mastodon', forums?.counts?.Mastodon || 0],
+    ['Lemmy', forums?.counts?.Lemmy || 0],
+    ['ApeWisdom', buzz ? 1 : 0],
+    ['Reddit', redditPosts.length],
+    ['SEC (דיווחים)', filings?.length || 0],
+  ].map(([name, items]) => ({ name, items, ok: items > 0 }));
+  const coverage = {
+    sources,
+    active: sources.filter((s) => s.ok).length,
+    total: sources.length,
+    dataPoints: sources.reduce((s, x) => s + x.items, 0),
+    factors: forecast?.signals.length || 0,
+  };
 
   return {
     symbol,
@@ -147,6 +190,8 @@ export async function getStock(symbol) {
     earningsForecast,
     history: series.slice(-260),
     forecast,
+    coverage,
+    details: { revisions, surprises: (surprises || []).slice(0, 4), insiders, institutions, shortInterest, options, margins },
     news: { aggregate: newsAgg, items: newsItems.slice(0, 30) },
     social: { aggregate: socialAgg, watchers: social?.watchers ?? null, items: posts.slice(0, 15) },
     reddit: { enabled: redditEnabled(), items: redditPosts.slice(0, 12) },
@@ -158,4 +203,5 @@ export async function getStock(symbol) {
   };
 }
 
+export const getTrackRecord = () => trackRecord(barsAnyClass);
 export const search = (q) => nasdaq.search(q);
