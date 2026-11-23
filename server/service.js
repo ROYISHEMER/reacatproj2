@@ -3,6 +3,7 @@ import { mapLimit } from './http.js';
 import * as nasdaq from './sources/nasdaq.js';
 import { getNews } from './sources/news.js';
 import { getSocial } from './sources/stocktwits.js';
+import { getReddit, redditEnabled } from './sources/reddit.js';
 import { aggregate, label, scoreText } from './analysis/sentiment.js';
 import { extractEvents } from './analysis/events.js';
 import { buildForecast } from './analysis/forecast.js';
@@ -55,7 +56,7 @@ export async function getStock(symbol) {
   const ac = quote.assetClass;
   const isStock = ac === 'stocks';
 
-  const [bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social] = await Promise.all([
+  const [bars, summary, analysts, earningsForecast, earningsDate, filings, profile, news, social, reddit] = await Promise.all([
     attempt('history', nasdaq.getHistory(symbol, ac), errors),
     attempt('summary', nasdaq.getSummary(symbol, ac), errors),
     isStock ? attempt('analysts', nasdaq.getAnalysts(symbol), errors) : null,
@@ -65,6 +66,7 @@ export async function getStock(symbol) {
     isStock ? attempt('profile', nasdaq.getProfile(symbol), errors) : null,
     attempt('news', getNews(symbol, quote.name), errors),
     attempt('social', getSocial(symbol), errors),
+    redditEnabled() ? attempt('reddit', getReddit(symbol), errors) : null,
   ]);
 
   const newsItems = (news || []).map((n) => {
@@ -77,7 +79,14 @@ export async function getStock(symbol) {
     const score = m.tag === 'Bullish' ? 1 : m.tag === 'Bearish' ? -1 : scoreText(m.body);
     return { ...m, sentiment: score, sentimentLabel: label(score) };
   });
-  const socialAgg = aggregate(posts.map((p) => ({ score: p.sentiment, at: p.createdAt })), { halfLifeDays: 1 });
+  const redditPosts = (reddit || []).map((r) => {
+    const score = scoreText(`${r.title}. ${r.body}`);
+    return { ...r, sentiment: score, sentimentLabel: label(score) };
+  });
+  const socialAgg = aggregate(
+    [...posts, ...redditPosts].map((p) => ({ score: p.sentiment, at: p.createdAt })),
+    { halfLifeDays: 1.5 },
+  );
 
   const events = extractEvents(newsItems);
   if (earningsDate) {
@@ -117,6 +126,7 @@ export async function getStock(symbol) {
     forecast,
     news: { aggregate: newsAgg, items: newsItems.slice(0, 30) },
     social: { aggregate: socialAgg, watchers: social?.watchers ?? null, items: posts.slice(0, 15) },
+    reddit: { enabled: redditEnabled(), items: redditPosts.slice(0, 12) },
     events,
     filings: filings || [],
     errors,

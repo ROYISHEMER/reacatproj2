@@ -5,6 +5,7 @@ import { scoreText, aggregate } from '../server/analysis/sentiment.js';
 import { extractDate, extractEvents, classify } from '../server/analysis/events.js';
 import { buildForecast, backtest, technicalScore } from '../server/analysis/forecast.js';
 import { parseRss } from '../server/sources/news.js';
+import { parseListing, redditEnabled } from '../server/sources/reddit.js';
 import { num } from '../server/sources/nasdaq.js';
 import { normalizeSymbol } from '../server/service.js';
 
@@ -86,6 +87,15 @@ test('backtest uses only past data and reports a rate', () => {
   const bt = backtest(series(400, 0.002, 0.01, 3), 20);
   assert.ok(bt.samples > 50);
   assert.ok(bt.hitRate >= 0 && bt.hitRate <= 1);
+});
+
+test('reddit listing parser', () => {
+  const post = { id: 'a', title: 'NVDA to the moon', selftext: 'x', subreddit: 'stocks', score: 5, num_comments: 2, created_utc: 1795000000, permalink: '/r/stocks/a' };
+  const sticky = { id: 'b', title: 'Daily thread', stickied: true, created_utc: 1795000000, permalink: '/r/stocks/b' };
+  const posts = parseListing({ data: { children: [{ data: post }, { data: sticky }] } });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, 'https://www.reddit.com/r/stocks/a');
+  assert.equal(redditEnabled(), false);
 });
 
 test('parsers', () => {

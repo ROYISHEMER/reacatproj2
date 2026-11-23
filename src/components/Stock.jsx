@@ -27,7 +27,7 @@ export default function Stock({ symbol }) {
   if (loading) return <p className="state">אוסף נתונים על <b dir="ltr">{symbol}</b>: מחירים, חדשות, רשתות, אנליסטים…</p>;
   if (error) return <p className="state err">לא ניתן לטעון את <b dir="ltr">{symbol}</b>: {error.message}</p>;
 
-  const { quote, summary, forecast: f, analysts, news, social, events, filings, earningsForecast, profile } = data;
+  const { quote, summary, forecast: f, analysts, news, social, reddit, events, filings, earningsForecast, profile } = data;
   const d = f ? DIRECTION[f.direction] : null;
   const main = f?.horizons.find((h) => h.days === 20);
   const upcoming = events.filter((e) => e.upcoming);
@@ -266,6 +266,19 @@ export default function Stock({ symbol }) {
               </li>
             ))}
           </ul>
+          <h3>Reddit</h3>
+          {!reddit.enabled && <p className="muted small">מקור Reddit אינו מוגדר (נדרשים REDDIT_CLIENT_ID ו־REDDIT_CLIENT_SECRET).</p>}
+          {reddit.enabled && reddit.items.length === 0 && <p className="muted small">לא נמצאו פוסטים מהשבוע האחרון.</p>}
+          {reddit.items.length > 0 && (
+            <ul className="feed">
+              {reddit.items.slice(0, 6).map((r) => (
+                <li key={r.id}>
+                  <a href={r.url} target="_blank" rel="noreferrer" dir="ltr">{r.title}</a>
+                  <span className="meta"><Sent label={r.sentimentLabel} /> <span dir="ltr">r/{r.subreddit}</span> · {r.comments} תגובות · {fmt.ago(r.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {filings.length > 0 && (
             <>
               <h3>דיווחים אחרונים לרשות ני״ע (SEC)</h3>
